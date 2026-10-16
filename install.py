@@ -69,7 +69,7 @@ KMS_OVERLAY = "vc4-kms-v3d"
 # so they must not stay enabled next to this driver.
 CONFLICT_OVERLAYS = ("vc4-kms-dsi-waveshare-panel",)
 DSI_INTERFACES = ("dsi0", "dsi1")
-DEFAULT_INTERFACE = "dsi0"  # dsi0 is the overlay's default target
+DEFAULT_INTERFACE = "dsi1"  # dsi0 is the overlay's default target
 COMMENT_MARKERS = ("#", ";")
 
 # --- brightness launcher: a click-to-run menu entry for brightness.py ---------
