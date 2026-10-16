@@ -67,6 +67,14 @@
 			touch: goodix@5d {
 				compatible = "goodix,gt911";
 				reg = <0x5d>;
+				/* GT911 VCC is the same PC7/IOVDD rail the glass uses, exposed
+				 * as a regulator by the panel MCU driver. Naming it here makes
+				 * goodix wait (-EPROBE_DEFER) until that supply is registered,
+				 * so the chip is powered before its id is read over I2C. The
+				 * property name must match goodix.c's regulator_get(dev,
+				 * "VDDIO").
+				 */
+				VDDIO-supply = <&panel_mcu>;
 				/* coordinate range reported to the input layer;
 				 * the sizex=/sizey= parameters below can override it at boot
 				 */
