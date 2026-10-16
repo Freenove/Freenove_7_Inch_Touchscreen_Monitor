@@ -1092,6 +1092,7 @@ class Installer:
         # A current build/ only costs the deployment half, never the whole run: a
         # folder copied to another card still gets its modules into extra/.
         options: tuple[str, ...] = ()
+        full_build = True
         if self.args.reinstall:
             print("--reinstall: forcing the full compile and deploy run.")
         else:
@@ -1099,6 +1100,7 @@ class Installer:
             if problems:
                 Console.items("A full build is needed:", problems)
             else:
+                full_build = False
                 print(
                     f"{driver.build_dir} already holds the two .ko, the .dtbo and the "
                     "kbuild metadata, all matching the running kernel."
@@ -1111,7 +1113,14 @@ class Installer:
                 options = (INSTALL_ONLY_FLAG,)
 
         job = "deploy only, no compile" if options else "compile and deploy"
-        if not Console.confirm(
+        # When nothing usable has been compiled yet (no build/, or an incomplete,
+        # stale or --reinstall-forced one), running the installer already means the
+        # user wants the driver built, so go straight to it without prompting. Only
+        # the already-built deploy-only path asks, because that is the one run a
+        # person may want to skip.
+        if full_build:
+            print(f"build.sh will run ({job}) and needs sudo; starting the compile.")
+        elif not Console.confirm(
             f"build.sh will run ({job}) and needs sudo. Continue?",
             True,
         ):
@@ -1261,7 +1270,7 @@ class Installer:
         # Never reboot on our own; only ask a human sitting at a terminal.
         if not sys.stdin.isatty():
             return
-        if Console.confirm("Reboot now?", False):
+        if Console.confirm("Reboot now?", True):
             Console.command(SUDO + ["reboot"])
 
     # --- main flow -----------------------------------------------------------
