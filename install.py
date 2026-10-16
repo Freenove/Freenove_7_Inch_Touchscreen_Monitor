@@ -69,7 +69,7 @@ KMS_OVERLAY = "vc4-kms-v3d"
 # so they must not stay enabled next to this driver.
 CONFLICT_OVERLAYS = ("vc4-kms-dsi-waveshare-panel",)
 DSI_INTERFACES = ("dsi0", "dsi1")
-DEFAULT_INTERFACE = "dsi1"  # dsi0 is the overlay's default target
+DEFAULT_INTERFACE = "dsi1"  # dsi1 is the overlay's default target
 COMMENT_MARKERS = ("#", ";")
 
 # --- brightness launcher: a click-to-run menu entry for brightness.py ---------
@@ -424,7 +424,7 @@ class DtoverlayLine:
 
     @property
     def interfaces(self) -> set[str]:
-        """Connector named on the line; a bare line means the dsi0 default."""
+        """Connector named on the line; a bare line means the dsi1 default."""
         found = {p.lower() for p in self.params if p.lower() in DSI_INTERFACES}
         return found or {DEFAULT_INTERFACE}
 
@@ -1162,14 +1162,14 @@ class Installer:
 
     def choose_interface(self) -> str:
         print("\nWhich connector on the Raspberry Pi 5 is the panel cable in?")
-        print("  0 -> dsi0 (default)")
-        print("  1 -> dsi1")
+        print("  0 -> dsi0")
+        print("  1 -> dsi1 (default)")
         while True:
-            answer = Console.ask("Enter 0 or 1 (empty for dsi0): ").lower()
-            if not answer or answer in ("0", "dsi0"):
-                return "dsi0"
-            if answer in ("1", "dsi1"):
+            answer = Console.ask("Enter 0 or 1 (empty for dsi1): ").lower()
+            if not answer or answer in ("1", "dsi1"):
                 return "dsi1"
+            if answer in ("0", "dsi0"):
+                return "dsi0"
             print("Unrecognised answer, try again.")
 
     # --- brightness launcher -------------------------------------------------

@@ -119,7 +119,7 @@ all of them. They take effect **immediately** (there is no preview mode).
 
 - **Pi 5 only — why a Pi 4 stays dark** — the overlay binds the panel to the
   Pi 5 (BCM2712) display path: the on-panel MCU / GT911 touch are grafted onto
-  `&i2c_csi_dsi0` and the DSI host onto `&dsi0`. A Pi 4 (BCM2711) routes its DSI
+  `&i2c_csi_dsi` and the DSI host onto `&dsi1`. A Pi 4 (BCM2711) routes its DSI
   display connector, CSI and I2C differently, so on that board the MCU at I2C
   `0x45` never appears, the regulator / panel drivers have nothing to bind to,
   and the power-up + DCS init sequence that lights the panel never runs. This is

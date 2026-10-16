@@ -108,7 +108,7 @@ sudo python3 install.py
 ## 注意事项
 
 - **仅支持树莓派 5 —— Pi 4 为何黑屏** —— overlay 是按树莓派 5（BCM2712）的显示
-  通路绑定本屏的：屏上 MCU / GT911 触摸挂到 `&i2c_csi_dsi0`，DSI 主机挂到 `&dsi0`。
+  通路绑定本屏的：屏上 MCU / GT911 触摸挂到 `&i2c_csi_dsi`，DSI 主机挂到 `&dsi1`。
   而树莓派 4（BCM2711）的 DSI 显示座、CSI 与 I2C 路由都不同，因此在该板上 I2C
   `0x45` 处的 MCU 根本不会出现，regulator / panel 驱动无节点可绑定，点亮屏幕所需的
   上电 + DCS 初始化时序也就跑不起来。这是**硬件 / 设备树层面的差异，换更新的系统镜像

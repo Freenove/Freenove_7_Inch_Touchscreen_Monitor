@@ -44,7 +44,7 @@
 	 * polarity GPIO_ACTIVE_HIGH".
 	 */
 	i2c_frag: fragment@0 {
-		target = <&i2c_csi_dsi0>;	/* DSI0 side by default, see the dsi0/dsi1 parameters below */
+		target = <&i2c_csi_dsi>;	/* DSI1 side by default, see the dsi0/dsi1 parameters below */
 		__overlay__ {
 			#address-cells = <1>;	/* child nodes are addressed by their I2C address, one cell */
 			#size-cells = <0>;	/* I2C devices have no register window to describe */
@@ -83,7 +83,7 @@
 	 * then binds to.
 	 */
 	dsi_frag: fragment@1 {
-		target = <&dsi0>;	/* the default connector; dsi1 below moves host and bus together */
+		target = <&dsi1>;	/* the default connector; dsi0 below moves host and bus together */
 		__overlay__ {
 			#address-cells = <1>;	/* DSI children are addressed by virtual channel number */
 			#size-cells = <0>;
@@ -146,15 +146,15 @@
 	 * parameter appears".
 	 */
 	__overrides__ {
-		/* a deliberate no-op: DSI0 is already the target, so this only makes
-		 * the ",dsi0" spelling known to the firmware instead of producing an
+		/* a deliberate no-op: DSI1 is already the target, so this only makes
+		 * the ",dsi1" spelling known to the firmware instead of producing an
 		 * unknown-parameter warning for people who write it explicitly
 		 */
-		dsi0 = <&dsi_frag>, "target:0=", <&dsi0>,
-		       <&i2c_frag>, "target:0=", <&i2c_csi_dsi0>;
-		/* move host and I2C fragment to the DSI1 connector */
 		dsi1 = <&dsi_frag>, "target:0=", <&dsi1>,
 		       <&i2c_frag>, "target:0=", <&i2c_csi_dsi>;
+		/* move host and I2C fragment to the DSI0 connector */
+		dsi0 = <&dsi_frag>, "target:0=", <&dsi0>,
+		       <&i2c_frag>, "target:0=", <&i2c_csi_dsi0>;
 		/* display-only setup: keep the controller off the bus */
 		disable_touch = <&touch>, "status=disabled";
 		/* mounting orientation 0/90/180/270, read by the panel driver */
