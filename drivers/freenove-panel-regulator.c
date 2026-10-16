@@ -43,6 +43,7 @@
 #include <linux/of.h>			/* OF match tables */
 #include <linux/property.h>		/* device property access */
 #include <linux/regmap.h>		/* regmap_init_i2c(), regmap_write() */
+#include <linux/regulator/driver.h>	/* regulator_desc/ops, devm_regulator_register() */
 
 /* The register map of the panel MCU. */
 #define FPN_REG_TP		0x94	/* mask bits 15..8 */
@@ -75,6 +76,7 @@
  *                   notion of
  * gc              - the gpio_chip handed to the GPIO core
  * enable          - descriptor for the optional BL_EN gate, our own bit 2
+ * iovcc_rdev      - the regulator that exposes IOVCC (bit 4) to the touch
  */
 struct freenove_panel_mcu {
 	struct mutex dir_lock;
@@ -85,6 +87,7 @@ struct freenove_panel_mcu {
 
 	struct gpio_chip gc;
 	struct gpio_desc *enable;
+	struct regulator_dev *iovcc_rdev;
 };
 
 /* Byte address, byte value, nothing past 0x96 reachable through regmap; the identity registers above it are read with i2c_transfer() instead. */
@@ -105,6 +108,90 @@ static void freenove_panel_write_state(struct freenove_panel_mcu *state,
 	regmap_write(state->regmap, FPN_REG_TP, value >> 8);
 	regmap_write(state->regmap, FPN_REG_LCD, value & 0xff);
 }
+
+/*
+ * Flip one mask bit and push the whole 16-bit pattern. Mirrors the gpio set
+ * path but is callable from the regulator ops below, so IOVCC (bit 4) can be
+ * driven as a power supply as well as through the gpio_chip.
+ */
+static void freenove_panel_set_bit(struct freenove_panel_mcu *state, u16 bit,
+				   bool on)
+{
+	mutex_lock(&state->pwr_lock);
+	if (on)
+		state->poweron_state |= bit;
+	else
+		state->poweron_state &= ~bit;
+	freenove_panel_write_state(state, state->poweron_state);
+	mutex_unlock(&state->pwr_lock);
+}
+
+/*
+ * --- IOVCC regulator ---
+ * IOVCC (mask bit 4, PC7) feeds the glass logic supply and, on this board,
+ * the GT911 touch VCC too. Exposing it as a regulator lets the touch node
+ * name it as its VDDIO supply; that reference is what the driver core turns
+ * into a consumer->supplier dependency, so the goodix client is deferred
+ * (-EPROBE_DEFER) until this driver has bound and registered the rail, rather
+ * than probing the chip over I2C before its supply is up. The panel driver
+ * keeps driving the same bit through its iovcc GPIO for the ordered display
+ * bring-up, so this rail simply has two consumers that both want it on while
+ * they are active.
+ */
+static int freenove_iovcc_enable(struct regulator_dev *rdev)
+{
+	struct freenove_panel_mcu *state = rdev_get_drvdata(rdev);
+
+	freenove_panel_set_bit(state, FPN_BIT_IOVCC, true);
+	return 0;
+}
+
+static int freenove_iovcc_disable(struct regulator_dev *rdev)
+{
+	struct freenove_panel_mcu *state = rdev_get_drvdata(rdev);
+
+	freenove_panel_set_bit(state, FPN_BIT_IOVCC, false);
+	return 0;
+}
+
+static int freenove_iovcc_is_enabled(struct regulator_dev *rdev)
+{
+	struct freenove_panel_mcu *state = rdev_get_drvdata(rdev);
+	int on;
+
+	mutex_lock(&state->pwr_lock);
+	on = !!(state->poweron_state & FPN_BIT_IOVCC);
+	mutex_unlock(&state->pwr_lock);
+	return on;
+}
+
+static const struct regulator_ops freenove_iovcc_ops = {
+	.enable = freenove_iovcc_enable,
+	.disable = freenove_iovcc_disable,
+	.is_enabled = freenove_iovcc_is_enabled,
+};
+
+static const struct regulator_desc freenove_iovcc_desc = {
+	.name = "vddio",
+	.id = -1,
+	.type = REGULATOR_VOLTAGE,
+	.owner = THIS_MODULE,
+	.ops = &freenove_iovcc_ops,
+};
+
+static const struct regulator_init_data freenove_iovcc_init_data = {
+	.constraints = {
+		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
+		/*
+		 * The glass shares this rail and owns its on/off lifecycle
+		 * through the panel driver's GPIO, so keep the regulator core
+		 * from tearing the rail down when a consumer reference drops
+		 * (touch suspend, for instance); the dependency we need is the
+		 * regulator existing, not the touch arbitrating its power.
+		 */
+		.always_on = 1,
+	},
+};
 
 /*
  * --- gpio_chip implementation ---
@@ -289,6 +376,7 @@ static int freenove_panel_i2c_probe(struct i2c_client *i2c)
 		.max_brightness = 255,	/* 8-bit duty register, so 0..255 */
 	};
 	struct backlight_device *bl;
+	struct regulator_config regulator_cfg = { };
 	struct freenove_panel_mcu *state;
 	unsigned int data;
 	bool pre_power_on;
@@ -375,7 +463,23 @@ static int freenove_panel_i2c_probe(struct i2c_client *i2c)
 		return PTR_ERR(bl);
 	bl->props.brightness = 255;		/* come up at full brightness */
 
-	dev_info(&i2c->dev, "panel MCU probed: gpiochip + backlight registered\n");
+	/*
+	 * Publish IOVCC as a regulator before we declare success, so a touch
+	 * client that references it as VDDIO-supply can resolve the phandle the
+	 * moment this device is bound.
+	 */
+	regulator_cfg.dev = &i2c->dev;
+	regulator_cfg.of_node = i2c->dev.of_node;
+	regulator_cfg.init_data = &freenove_iovcc_init_data;
+	regulator_cfg.driver_data = state;
+	state->iovcc_rdev = devm_regulator_register(&i2c->dev,
+						    &freenove_iovcc_desc,
+						    &regulator_cfg);
+	if (IS_ERR(state->iovcc_rdev))
+		return dev_err_probe(&i2c->dev, PTR_ERR(state->iovcc_rdev),
+				     "failed to register IOVCC regulator\n");
+
+	dev_info(&i2c->dev, "panel MCU probed: gpiochip + backlight + IOVCC regulator registered\n");
 	return 0;
 }
 
