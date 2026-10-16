@@ -1,0 +1,170 @@
+/*
+ * Device tree overlay for the Freenove "7inch C" MIPI-DSI panel (EK79007
+ * glass, 1024x600). It only draws the wiring diagram; the behaviour comes
+ * from the two out-of-tree drivers that have to be installed with it:
+ *
+ *   freenove-panel-regulator.ko   compatible "freenove,panel-mcu"
+ *       The MCU on the panel board at I2C 0x45. Its mask registers 0x94
+ *       (bits 15..8) and 0x95 (bits 7..0) become a GPIO controller, and 0x96
+ *       becomes a backlight device.
+ *       Bits used by this overlay: 0 AVDD, 1 LCD_RESET, 2 BL_EN, 4 IOVCC,
+ *       8/9 VCC.
+ *
+ *   panel-freenove-ek79007.ko     compatible "freenove,ek79007-7inch-c"
+ *       The DSI panel driver: sequences the supplies through the MCU pins
+ *       declared below, then sends the EK79007 init set (0x80..0x87,
+ *       0xB0..0xB2, Sleep Out, Display On). Timing 1024x600 at 51.7 MHz,
+ *       blanking 160/10/160 + 12/1/23.
+ *
+ * Wiring:
+ *
+ *   SoC --- 2-lane MIPI DSI, video mode ---> EK79007 glass
+ *   SoC --- I2C ---+--- on-panel MCU @ 0x45 (supplies, reset, backlight)
+ *                  +--- GT911 touch     @ 0x5d
+ *
+ * Build and install on the Pi:
+ *   dtc -@ -I dts -O dtb -o vc4-kms-dsi-freenove-panel.dtbo \
+ *       vc4-kms-dsi-freenove-panel.dts
+ *   sudo cp vc4-kms-dsi-freenove-panel.dtbo /boot/firmware/overlays/
+ *   then in /boot/firmware/config.txt:
+ *     dtoverlay=vc4-kms-v3d
+ *     dtoverlay=vc4-kms-dsi-freenove-panel
+ */
+
+/dts-v1/;
+/plugin/;	/* an overlay the firmware grafts onto the real device tree */
+
+/ {
+	compatible = "brcm,bcm2835";	/* lets the firmware recognise this as applying to Raspberry Pi boards */
+
+	/*
+	 * --- fragment@0: the I2C bus on the DSI connector ---
+	 * Declaring the MCU as a gpio-controller is what makes every
+	 * <&panel_mcu N 0> reference later in this file mean "mask bit N,
+	 * polarity GPIO_ACTIVE_HIGH".
+	 */
+	i2c_frag: fragment@0 {
+		target = <&i2c_csi_dsi0>;	/* DSI0 side by default, see the dsi0/dsi1 parameters below */
+		__overlay__ {
+			#address-cells = <1>;	/* child nodes are addressed by their I2C address, one cell */
+			#size-cells = <0>;	/* I2C devices have no register window to describe */
+			status = "okay";	/* the connector bus is disabled in the base tree */
+
+			/* the MCU on the panel board, bound by freenove-panel-regulator */
+			panel_mcu: panel-mcu@45 {
+				compatible = "freenove,panel-mcu";
+				reg = <0x45>;
+				gpio-controller;	/* this node supplies GPIOs instead of consuming them */
+				#gpio-cells = <2>;	/* a reference carries two cells: bit number and flags */
+				/* bit 2 is BL_EN, the backlight gate. The reference points back into
+				 * this very node, which is why the driver registers its gpio_chip
+				 * before asking for this descriptor.
+				 */
+				enable-gpios = <&panel_mcu 2 0>;
+			};
+
+			/* the touch controller, served by the in-tree goodix driver */
+			touch: goodix@5d {
+				compatible = "goodix,gt911";
+				reg = <0x5d>;
+				/* coordinate range reported to the input layer;
+				 * the sizex=/sizey= parameters below can override it at boot
+				 */
+				touchscreen-size-x = <800>;
+				touchscreen-size-y = <480>;
+			};
+		};
+	};
+
+	/*
+	 * --- fragment@1: the MIPI DSI host ---
+	 * The panel hangs off the DSI bus as a child node. The mipi_dsi core
+	 * builds a DSI device from it, which is what panel-freenove-ek79007
+	 * then binds to.
+	 */
+	dsi_frag: fragment@1 {
+		target = <&dsi0>;	/* the default connector; dsi1 below moves host and bus together */
+		__overlay__ {
+			#address-cells = <1>;	/* DSI children are addressed by virtual channel number */
+			#size-cells = <0>;
+			status = "okay";	/* the host is turned off in the base tree */
+
+			/* OF graph, host side: this output ends in the panel's input */
+			port {
+				dsi_out: endpoint {
+					remote-endpoint = <&panel_in>;
+				};
+			};
+
+			/* the panel on virtual channel 0, bound by panel-freenove-ek79007 */
+			panel: dsi_panel@0 {
+				reg = <0>;	/* DSI virtual channel */
+				compatible = "freenove,ek79007-7inch-c";
+
+				/* no supply or reset reaches the SoC: the panel driver has to raise
+				 * IOVCC (bit 4), AVDD (bit 0) and release reset (bit 1) through the MCU
+				 */
+				reset-gpios = <&panel_mcu 1 0>;
+				iovcc-gpios = <&panel_mcu 4 0>;
+				avdd-gpios = <&panel_mcu 0 0>;
+
+				/* the backlight device is the one the MCU driver registers for 0x96;
+				 * this phandle is what drm_panel_of_backlight() resolves, which puts
+				 * brightness under /sys/class/backlight/
+				 */
+				backlight = <&panel_mcu>;
+
+				/* OF graph, panel side: the endpoint must point back, or the link is broken */
+				port {
+					panel_in: endpoint {
+						remote-endpoint = <&dsi_out>;
+					};
+				};
+			};
+		};
+	};
+
+	/* --- fragment@2/@3: i2c_csi_dsi hangs behind i2c0, so that chain has to be on too --- */
+	fragment@2 {
+		target = <&i2c0if>;	/* the i2c0 interface */
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@3 {
+		target = <&i2c0mux>;	/* and the multiplexer in front of it */
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	/*
+	 * --- boot-time parameters, written as dtoverlay=...,param=value ---
+	 * Each entry names a node, a property and the byte offset to patch;
+	 * a "?" after the property name means "set this boolean flag when the
+	 * parameter appears".
+	 */
+	__overrides__ {
+		/* a deliberate no-op: DSI0 is already the target, so this only makes
+		 * the ",dsi0" spelling known to the firmware instead of producing an
+		 * unknown-parameter warning for people who write it explicitly
+		 */
+		dsi0 = <&dsi_frag>, "target:0=", <&dsi0>,
+		       <&i2c_frag>, "target:0=", <&i2c_csi_dsi0>;
+		/* move host and I2C fragment to the DSI1 connector */
+		dsi1 = <&dsi_frag>, "target:0=", <&dsi1>,
+		       <&i2c_frag>, "target:0=", <&i2c_csi_dsi>;
+		/* display-only setup: keep the controller off the bus */
+		disable_touch = <&touch>, "status=disabled";
+		/* mounting orientation 0/90/180/270, read by the panel driver */
+		rotation = <&panel>, "rotation:0";
+		/* calibration for panels mounted rotated or flipped */
+		invx = <&touch>, "touchscreen-inverted-x?";
+		invy = <&touch>, "touchscreen-inverted-y?";
+		swapxy = <&touch>, "touchscreen-swapped-x-y?";
+		/* patch the range declared in the touch node above */
+		sizex = <&touch>, "touchscreen-size-x:0";
+		sizey = <&touch>, "touchscreen-size-y:0";
+	};
+};
