@@ -24,10 +24,12 @@
  *   - the optional enable-gpios property, which points back at our own bit 2
  *     and gates the supply in front of the PWM.
  *
- * probe() leaves only VCC on. The glass supplies, and reset with them,
- * belong to the panel driver's prepare(), so the power-up order lives in
- * exactly one place; the DT pre-power-on property is there for setups that
- * want the glass fed before that happens.
+ * probe() turns on VCC and IOVCC. IOVCC (PC7) also feeds the GT911 touch,
+ * which is probed on the same I2C bus with no supply dependency of its own,
+ * so it has to be up before that probe. The other glass supplies, and reset
+ * with them, still belong to the panel driver's prepare(), so the display
+ * power-up order lives in one place; the DT pre-power-on property is there
+ * for setups that want the whole glass fed even before that.
  */
 
 #include <linux/backlight.h>		/* backlight_device_register() */
@@ -317,17 +319,22 @@ static int freenove_panel_i2c_probe(struct i2c_client *i2c)
 			 data);
 
 	/*
-	 * VCC alone to start with, so the board is fed while the glass stays
-	 * dark and the panel driver keeps ownership of the supply order.
-	 * pre-power-on is the exception, for setups that want an image as
-	 * early as possible: the extra rails come up here and need a longer
-	 * settle time than VCC by itself.
+	 * Start with VCC (board supply) and IOVCC (logic supply). IOVCC doubles
+	 * as the GT911 touch VCC on this board, and the in-tree goodix driver
+	 * probes the chip over the same I2C bus as soon as it is enumerated,
+	 * with no supply of its own to wait for; raising IOVCC here means the
+	 * panel-mcu@45 client (created ahead of goodix@5d) powers the touch
+	 * before that probe reads the chip id. The panel driver's prepare()
+	 * re-asserts IOVCC as its first ordered step, so keeping it on here is
+	 * harmless to the glass. pre-power-on is the exception that also brings
+	 * AVDD and reset up this early, for setups that want an image as soon
+	 * as possible; that case needs a longer settle time than the supplies
+	 * by themselves.
 	 */
 	pre_power_on = device_property_read_bool(&i2c->dev, "pre-power-on");
-	state->poweron_state = FPN_BIT_VCC;
+	state->poweron_state = FPN_BIT_VCC | FPN_BIT_IOVCC;
 	if (pre_power_on)
-		state->poweron_state |= FPN_BIT_IOVCC | FPN_BIT_LCD_RESET |
-					FPN_BIT_AVDD;
+		state->poweron_state |= FPN_BIT_LCD_RESET | FPN_BIT_AVDD;
 	freenove_panel_write_state(state, state->poweron_state);
 	msleep(pre_power_on ? 200 : 20);
 
