@@ -18,7 +18,10 @@ One run performs the following five steps, in order:
    `dsi1`) and makes `/boot/firmware/config.txt` match exactly: commenting out
    wrong or conflicting lines and appending the correct ones at the end.
 4. **Brightness launcher** — adds a click-to-run backlight slider entry to the
-   desktop user's application menu.
+   desktop user's application menu. Before creating it, the script checks that
+   the slider's dependency PyQt5 is importable by the desktop `python3` and
+   installs the `python3-pyqt5` package when it is missing; this is non-fatal, so
+   a failed install only warns and the rest of the run continues.
 5. **Touch range guard** — deploys `drivers/touch-guard.py` and its systemd
    oneshot `drivers/touch-guard.service` and enables them, so a cold boot that
    left the GT911 on its default 4096 range is re-probed at start-up. It is a
@@ -79,13 +82,14 @@ sudo python3 install.py
 |---|---|
 | *(no option)* | Full interactive install: board check → build/deploy → `config.txt` → brightness launcher → touch guard → summary |
 | `--reinstall` | Ignore the `drivers/build/` freshness check and force a full "compile + deploy" |
+| `--ensure-pyqt` | Check PyQt5 for the brightness slider, install `python3-pyqt5` if it is missing, then exit |
 | `--rotation X` | Set the display rotation directly (`0` / `90` / `180` / `270`) |
 | `--swapxy` | Set the touch X/Y swap flag directly |
 | `--invx` | Set the touch X-invert flag directly |
 | `--invy` | Set the touch Y-invert flag directly |
 | `--sizex N` / `--sizey N` | Set the touch coordinate range directly |
 
-All of these only write `config.txt` (a boot-time override); the `.dts` is never modified and nothing is recompiled.
+The `--rotation` / `--swapxy` / `--invx` / `--invy` / `--sizex` / `--sizey` flags only write `config.txt` (a boot-time override); the `.dts` is never modified and nothing is recompiled. `--ensure-pyqt` runs just the PyQt5 dependency check (and install) and then exits.
 
 ### Querying the current config (read-only)
 
@@ -141,6 +145,11 @@ all of them. They take effect **immediately** (there is no preview mode).
   (`Terminal=false`). `brightness.py` writes the backlight through `sudo tee`,
   so a click only changes the brightness when `sudo` is already cached or the
   command is configured passwordless (NOPASSWD).
+- **PyQt5 for the slider** — the brightness launcher needs PyQt5, provided by
+  the `python3-pyqt5` apt package. Step 4 checks that the desktop `python3` can
+  import it and installs the package when it cannot (needs sudo; a failure only
+  warns and never aborts the install). To run just that check:
+  `sudo python3 install.py --ensure-pyqt`.
 - **Touch range guard** — a cold-boot fallback installed as
   `freenove-touch-guard.service`. Once the kernel/overlay raises IOVCC before
   the touch probes, it reads the correct 800x480 range at boot and does nothing;
