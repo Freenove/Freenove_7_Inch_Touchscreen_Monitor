@@ -14,6 +14,8 @@
    `/boot/firmware/config.txt` 改成与之完全一致：注释掉错误或冲突的行，
    在文件末尾追加正确的行。
 4. **亮度启动器** —— 在桌面用户的应用菜单里加入一个可点击启动的背光滑条入口。
+   创建前会先检查滑条依赖的 PyQt5 能否被桌面 `python3` 导入，缺失则用 apt 安装
+   `python3-pyqt5`；此步骤非致命，失败只告警、不中断其余安装。
 5. **触摸守护** —— 部署 `drivers/touch-guard.py` 及其 systemd 一次性服务
    `drivers/touch-guard.service` 并设为开机自启，用于在冷启动把 GT911 留在默认
    4096 量程时开机自动重新探测。它是内核/overlay 供电修复的兜底，当该修复已生效时
@@ -69,13 +71,14 @@ sudo python3 install.py
 |---|---|
 | *（不带选项）* | 完整交互安装：型号检查 → 编译/部署 → `config.txt` → 亮度启动器 → 触摸守护 → 总结 |
 | `--reinstall` | 忽略 `drivers/build/` 是否新鲜的判断，强制完整“编译 + 部署” |
+| `--ensure-pyqt` | 检查背光滑条所需的 PyQt5，缺失则安装 `python3-pyqt5`，然后退出 |
 | `--rotation X` | 直接设置显示旋转（`0` / `90` / `180` / `270`） |
 | `--swapxy` | 直接设置触摸 XY 交换 |
 | `--invx` | 直接设置触摸 X 反转 |
 | `--invy` | 直接设置触摸 Y 反转 |
 | `--sizex N` / `--sizey N` | 直接设置触摸坐标范围 |
 
-以上选项都只写入 `config.txt`（开机覆盖参数），**不修改 `.dts`、不触发重新编译**。
+`--rotation` / `--swapxy` / `--invx` / `--invy` / `--sizex` / `--sizey` 这些选项只写入 `config.txt`（开机覆盖参数），**不修改 `.dts`、不触发重新编译**。`--ensure-pyqt` 只执行 PyQt5 依赖检查（并在缺失时安装）然后退出。
 
 ### 查询当前配置（只读）
 
@@ -126,6 +129,9 @@ sudo python3 install.py
 - **亮度启动器** —— 它以 `Terminal=false` 在后台启动 `brightness.py`。而
   `brightness.py` 通过 `sudo tee` 写背光，所以只有当 `sudo` 凭据已缓存、或该命令
   被配置为免密（NOPASSWD）时，点击才能真正改变亮度。
+- **滑条所需 PyQt5** —— 背光滑条依赖 PyQt5，来自 apt 包 `python3-pyqt5`。第 4 步
+  会检查桌面 `python3` 能否导入它，缺失则自动安装（需 sudo；失败只告警，不会中断
+  整个安装）。只想单独跑这项检查：`sudo python3 install.py --ensure-pyqt`。
 - **触摸守护** —— 作为冷启动兜底，安装为 `freenove-touch-guard.service`。当内核/overlay
   已在触摸探测前拉高 IOVCC 时，它开机读到正确的 800x480 量程就什么都不做；只有冷启动
   把 GT911 留在 4096 默认量程时才会重新绑定触摸驱动。可用
