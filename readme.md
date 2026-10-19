@@ -39,11 +39,11 @@ it from a terminal and answer the prompts.
   `1` on any other board. The image must be 64-bit: a Pi 5 boots an arm64 kernel
   even on the 32-bit image, and the panel's kernel modules cannot be built from a
   32-bit userland.
-- Tested on the following Raspberry Pi OS images (both 64-bit, release
-  2026-10-06). The exact Raspberry Pi Imager selections are captured in the
-  `picture/` folder:
-  - `picture/Raspberry Pi OS (64-bit)--Trixie.png` — Raspberry Pi OS (64-bit), a port of Debian Trixie
-  - `picture/Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png` — Raspberry Pi OS (Legacy, 64-bit), a port of Debian Bookworm
+- Built and verified end to end (compile, load, display and touch) on the
+  following Raspberry Pi OS images, both 64-bit and released 2026-10-06. The
+  exact Raspberry Pi Imager selections are captured in the `picture/` folder:
+  - `picture/Raspberry Pi OS (64-bit)--Trixie.png` — Raspberry Pi OS (64-bit), Debian Trixie, kernel 6.18.50+rpt-rpi-2712
+  - `picture/Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png` — Raspberry Pi OS (Legacy, 64-bit), Debian Bookworm, kernel 6.12.109+rpt-rpi-2712
 - Python 3 — the installer itself uses only the standard library.
 - Root — run it with `sudo`.
 - The backlight slider it launches (`drivers/brightness.py`) needs `python3-pyqt5`.

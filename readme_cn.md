@@ -29,10 +29,10 @@
   树莓派 5（BCM2712）**——树莓派 3 / 4 无法驱动（原因见“注意事项”），`install.py`
   在其它型号上会以退出码 `1` 停止。镜像必须是 64 位：树莓派 5 即使刷 32 位镜像也会
   引导 arm64 内核，而屏的内核模块无法在 32 位用户态下编译。
-- 已在以下 Raspberry Pi OS 镜像上测试通过（均为 64 位，发布于 2026-10-06）。具体
-  的 Raspberry Pi Imager 选择见 `picture/` 文件夹：
-  - `picture/Raspberry Pi OS (64-bit)--Trixie.png` —— Raspberry Pi OS (64-bit)，Debian Trixie 移植版
-  - `picture/Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png` —— Raspberry Pi OS (Legacy, 64-bit)，Debian Bookworm 移植版
+- 已在以下 Raspberry Pi OS 镜像上完整验证通过（编译、加载、显示与触摸均正常；均为
+  64 位，发布于 2026-10-06）。具体的 Raspberry Pi Imager 选择见 `picture/` 文件夹：
+  - `picture/Raspberry Pi OS (64-bit)--Trixie.png` —— Raspberry Pi OS (64-bit)，Debian Trixie 移植版，内核 6.18.50+rpt-rpi-2712
+  - `picture/Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png` —— Raspberry Pi OS (Legacy, 64-bit)，Debian Bookworm 移植版，内核 6.12.109+rpt-rpi-2712
 - Python 3 —— 安装器本身只用标准库。
 - root 权限 —— 用 `sudo` 运行。
 - 它启动的背光滑条（`drivers/brightness.py`）需要 `python3-pyqt5`。
