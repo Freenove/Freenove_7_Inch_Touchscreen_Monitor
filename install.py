@@ -34,6 +34,12 @@ when a cold boot leaves the GT911 on its 4096 power-on range. It is a fallback
 for the kernel/overlay IOVCC power fix and stays a no-op once that fix already
 yields the right range; --remove-guard takes it back out.
 
+Before that launcher is created install.py checks its one dependency: the slider
+(brightness.py) needs PyQt5, which Raspberry Pi OS ships as python3-pyqt5. If
+the desktop interpreter cannot import it, install.py installs the package. This
+is non-fatal -- the panel and touch work without the slider -- and --ensure-pyqt
+runs just that check on its own.
+
 Two flags are read-only queries rather than install steps: --screen and --touch
 print the current display / touch overlay parameters found in config.txt,
 falling back to the .dts defaults for anything not set there. They change
@@ -45,6 +51,7 @@ Usage:
     sudo python3 install.py --rotation 90   # set the display rotation directly
     python3 install.py --screen             # query the current display rotation
     python3 install.py --touch              # query the current touch config
+    sudo python3 install.py --ensure-pyqt   # check/install PyQt5 for the slider and exit
     python3 install.py --remove-menu        # only take the brightness launcher back out
     sudo python3 install.py --uninstall     # remove drivers/build/, overlay, config lines and launcher
 
@@ -1056,6 +1063,81 @@ class TouchGuard:
             print("No touch range guard installation found to remove.")
 
 
+# --- PyQt5 dependency for the brightness slider ------------------------------
+class PyQtDependency:
+    """Ensure drivers/brightness.py can import PyQt5, installing it when not.
+
+    The slider needs PyQt5; Raspberry Pi OS ships it as the apt package
+    python3-pyqt5. This is a prerequisite of the desktop launcher rather than of
+    the driver, so callers treat a failure as a warning, never a reason to abort
+    -- the panel and touch work fine without the slider.
+
+    The check imports the exact modules brightness.py uses under the same
+    `python3` the launcher runs it with, so a pass means the window really
+    starts: QtWidgets pulls in the Qt libraries, and a missing shared object
+    fails here even when a bare PyQt5 folder exists. It runs in a subprocess so
+    install.py itself stays standard-library only.
+    """
+
+    IMPORT_TEST = "import PyQt5.QtCore, PyQt5.QtWidgets"
+    PACKAGE = "python3-pyqt5"
+    INTERPRETER = "python3"
+
+    @classmethod
+    def available(cls) -> bool | None:
+        """True/False whether the launcher interpreter imports PyQt5, None if absent."""
+        if shutil.which(cls.INTERPRETER) is None:
+            return None
+        result = subprocess.run(
+            [cls.INTERPRETER, "-c", cls.IMPORT_TEST], capture_output=True, text=True
+        )
+        return result.returncode == 0
+
+    @staticmethod
+    def apt() -> str | None:
+        """apt-get if present, else apt, else None."""
+        for name in ("apt-get", "apt"):
+            path = shutil.which(name)
+            if path:
+                return path
+        return None
+
+    @classmethod
+    def ensure(cls, install: bool = True) -> bool:
+        """Check, and install the package when it is missing. Return success."""
+        state = cls.available()
+        if state is None:
+            print(f"Warning: '{cls.INTERPRETER}' was not found; cannot verify PyQt5.")
+            return False
+        if state:
+            print(f"PyQt5 is already available to {cls.INTERPRETER}.")
+            return True
+
+        print(f"PyQt5 is missing for {cls.INTERPRETER}; the brightness slider needs it.")
+        if not install:
+            return False
+
+        apt = cls.apt()
+        if apt is None:
+            print(f"Warning: no apt found; install {cls.PACKAGE} manually for the slider.")
+            return False
+
+        print(f"Installing {cls.PACKAGE} (this uses sudo).")
+        # An index refresh that fails is worth warning about but not fatal: a
+        # warm cache can still install the package, so the attempt proceeds.
+        if Console.command(SUDO + [apt, "update"]) != 0:
+            print("Warning: 'apt update' failed; trying the install with the cache as-is.")
+        if Console.command(SUDO + [apt, "install", "-y", cls.PACKAGE]) != 0:
+            print(f"Warning: installing {cls.PACKAGE} failed.")
+            return False
+        # Re-check in a fresh interpreter so the just-installed package shows up.
+        if cls.available():
+            print(f"Installed {cls.PACKAGE}; PyQt5 is now available.")
+            return True
+        print(f"Warning: {cls.PACKAGE} was installed but still is not importable.")
+        return False
+
+
 # --- installer ----------------------------------------------------------------
 class Installer:
     """Command line plus the steps, in the order the readme asks for."""
@@ -1271,6 +1353,14 @@ class Installer:
         copies, and it doubles as the refresh path when brightness.py changed.
         """
         Console.banner("Adding the brightness launcher (brightness.py)")
+        # The slider is a PyQt5 app, so make sure the desktop interpreter can
+        # import it before dropping the launcher in. Non-fatal: the panel works
+        # without the slider, so a failure only warns and the install continues.
+        if not PyQtDependency.ensure():
+            print(
+                "The launcher is created regardless; the slider will not start "
+                "until python3-pyqt5 is installed."
+            )
         entry = MenuEntry(self.drivers_dir, self.logo_dir)
         entry.remove(quiet=True)
         entry.create()
@@ -1396,6 +1486,10 @@ class Installer:
         if self.query_requested():
             self.run_query()
             return EXIT_OK
+        # Standalone dependency action: check PyQt5 for the slider, install it if
+        # missing, then stop. It uses apt (and so sudo) but needs no board check.
+        if self.args.ensure_pyqt:
+            return EXIT_OK if PyQtDependency.ensure() else EXIT_ERROR
         self.step_board()
         self.step_tune()
         self.step_install()
@@ -1460,6 +1554,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--remove-guard",
         action="store_true",
         help="disable and delete the GT911 touch range guard (service + script) and exit",
+    )
+    parser.add_argument(
+        "--ensure-pyqt",
+        action="store_true",
+        help="check PyQt5 for the brightness slider, install python3-pyqt5 if missing, then exit",
     )
     parser.add_argument(
         "--clean",
