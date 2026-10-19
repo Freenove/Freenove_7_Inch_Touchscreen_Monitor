@@ -33,10 +33,17 @@ it from a terminal and answer the prompts.
 
 ## Requirements
 
-- A Raspberry Pi 5 running Raspberry Pi OS (Bookworm / Trixie). **This panel is
-  supported on a Raspberry Pi 5 (BCM2712) only** — a Pi 3 / Pi 4 will not drive
-  it (see Notes for why), and `install.py` stops with exit code `1` on any other
-  board.
+- A Raspberry Pi 5 running the **64-bit** Raspberry Pi OS (Bookworm or Trixie).
+  **This panel is supported on a Raspberry Pi 5 (BCM2712) only** — a Pi 3 / Pi 4
+  will not drive it (see Notes for why), and `install.py` stops with exit code
+  `1` on any other board. The image must be 64-bit: a Pi 5 boots an arm64 kernel
+  even on the 32-bit image, and the panel's kernel modules cannot be built from a
+  32-bit userland.
+- Tested on the following Raspberry Pi OS images (both 64-bit, release
+  2026-10-06). The exact Raspberry Pi Imager selections are captured in the
+  `picture/` folder:
+  - `picture/Raspberry Pi OS (64-bit)--Trixie.png` — Raspberry Pi OS (64-bit), a port of Debian Trixie
+  - `picture/Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png` — Raspberry Pi OS (Legacy, 64-bit), a port of Debian Bookworm
 - Python 3 — the installer itself uses only the standard library.
 - Root — run it with `sudo`.
 - The backlight slider it launches (`drivers/brightness.py`) needs `python3-pyqt5`.
@@ -44,7 +51,8 @@ it from a terminal and answer the prompts.
 ## Project layout
 
 Everything is driven from `install.py`, which stays at the project root. The
-files it calls are split into two folders:
+files it calls live under `drivers/` and `logo/`, while `picture/` and
+`datasheet/` hold reference material:
 
 ```
 Freenove_TouchScreen_Driver_Install/
@@ -60,8 +68,13 @@ Freenove_TouchScreen_Driver_Install/
 │   ├── touch-guard.py                  #   cold-boot touch range guard (fallback)
 │   ├── touch-guard.service             #   its systemd oneshot unit
 │   └── build/                          #   (generated) compiled .ko/.dtbo output
-└── logo/
-    └── brightness.png                 # icon for the menu launcher
+├── logo/
+│   └── brightness.png                 # icon for the menu launcher
+├── picture/                           # screenshots of the tested Raspberry Pi OS images
+│   ├── Raspberry Pi OS (64-bit)--Trixie.png
+│   └── Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png
+└── datasheet/                         # the panel's datasheet
+    └── HXR070WSI30-2735.pdf
 ```
 
 `build.sh` always works relative to its own folder, so `build/` is produced at
