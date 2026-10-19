@@ -183,18 +183,25 @@ static int freenove_panel_gpio_get(struct gpio_chip *gc, unsigned int offset)
 }
 
 /*
+ * struct gpio_chip ->set() has changed return type twice: int up to 6.8, void
+ * across 6.9..6.16 ("gpiolib: get rid of the return value of ->set()"), and
+ * int again from 6.17 (the revert lets an I2C GPIO expander report a failed
+ * transfer). Raspberry Pi OS only ever ships one side of each boundary -- 6.6,
+ * then 6.12/6.16, then 6.17/6.18 -- so this window picks the matching
+ * signature on every image the panel targets, with no cast or guesswork.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0) && \
+    LINUX_VERSION_CODE <  KERNEL_VERSION(6, 17, 0)
+#define FREENOVE_GPIO_SET_VOID
+#endif
+
+/*
  * Set a line level, the entry point the panel driver uses for its supplies
  * and for reset. Under pwr_lock: take the mirror, flip the one bit, store it
- * back, then push the whole mask over I2C.
- *
- * The return type is a kernel API break: ->set() returned int up to 6.8 and
- * became void in 6.9 ("gpiolib: get rid of the return value of ->set() and
- * ->set_multiple()"). A Pi 5 runs 6.12, but guarding on LINUX_VERSION_CODE
- * keeps this one source building against older Trixie/Bookworm images too.
- * The GPIO core bounds-checks offset against ngpio before calling, so a line
- * past the last is simply ignored.
+ * back, then push the whole mask over I2C. The GPIO core bounds-checks offset
+ * against ngpio before calling, so a line past the last is simply ignored.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+#ifdef FREENOVE_GPIO_SET_VOID
 static void freenove_panel_gpio_set(struct gpio_chip *gc, unsigned int offset,
 				    int value)
 #else
@@ -206,7 +213,7 @@ static int freenove_panel_gpio_set(struct gpio_chip *gc, unsigned int offset,
 	u16 last_val;
 
 	if (offset >= FPN_NUM_GPIO)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+#ifdef FREENOVE_GPIO_SET_VOID
 		return;
 #else
 		return -EINVAL;
@@ -222,7 +229,7 @@ static int freenove_panel_gpio_set(struct gpio_chip *gc, unsigned int offset,
 	freenove_panel_write_state(state, last_val);
 	mutex_unlock(&state->pwr_lock);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 9, 0)
+#ifndef FREENOVE_GPIO_SET_VOID
 	return 0;
 #endif
 }
