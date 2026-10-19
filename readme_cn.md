@@ -25,16 +25,21 @@
 
 ## 运行环境要求
 
-- 树莓派 5，系统为 Raspberry Pi OS（Bookworm / Trixie）。**本屏仅支持树莓派 5
-  （BCM2712）**——树莓派 3 / 4 无法驱动（原因见“注意事项”），`install.py` 在其它
-  型号上会以退出码 `1` 停止。
+- 树莓派 5，系统为 **64 位** Raspberry Pi OS（Bookworm 或 Trixie）。**本屏仅支持
+  树莓派 5（BCM2712）**——树莓派 3 / 4 无法驱动（原因见“注意事项”），`install.py`
+  在其它型号上会以退出码 `1` 停止。镜像必须是 64 位：树莓派 5 即使刷 32 位镜像也会
+  引导 arm64 内核，而屏的内核模块无法在 32 位用户态下编译。
+- 已在以下 Raspberry Pi OS 镜像上测试通过（均为 64 位，发布于 2026-10-06）。具体
+  的 Raspberry Pi Imager 选择见 `picture/` 文件夹：
+  - `picture/Raspberry Pi OS (64-bit)--Trixie.png` —— Raspberry Pi OS (64-bit)，Debian Trixie 移植版
+  - `picture/Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png` —— Raspberry Pi OS (Legacy, 64-bit)，Debian Bookworm 移植版
 - Python 3 —— 安装器本身只用标准库。
 - root 权限 —— 用 `sudo` 运行。
 - 它启动的背光滑条（`drivers/brightness.py`）需要 `python3-pyqt5`。
 
 ## 工程结构
 
-一切都由留在项目根目录的 `install.py` 驱动，它调用的文件分为两个子目录：
+一切都由留在项目根目录的 `install.py` 驱动，它调用的文件位于 `drivers/` 与 `logo/`；`picture/` 与 `datasheet/` 则是参考资料：
 
 ```
 Freenove_TouchScreen_Driver_Install/
@@ -50,8 +55,13 @@ Freenove_TouchScreen_Driver_Install/
 │   ├── touch-guard.py                  #   冷启动触摸量程守护（兜底）
 │   ├── touch-guard.service             #   对应的 systemd 一次性单元
 │   └── build/                          #   （生成物）编译出的 .ko/.dtbo
-└── logo/
-    └── brightness.png                 # 菜单启动器的图标
+├── logo/
+│   └── brightness.png                 # 菜单启动器的图标
+├── picture/                           # 已测试的 Raspberry Pi OS 镜像截图
+│   ├── Raspberry Pi OS (64-bit)--Trixie.png
+│   └── Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png
+└── datasheet/                         # 屏的规格书
+    └── HXR070WSI30-2735.pdf
 ```
 
 `build.sh` 始终以自己所在目录为基准，所以无论从哪里调用，`build/` 都生成在
