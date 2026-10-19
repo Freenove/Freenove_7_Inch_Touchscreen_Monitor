@@ -5,7 +5,7 @@
 
 ## 它做了什么
 
-一次运行按顺序完成以下四步：
+一次运行按顺序完成以下五步：
 
 1. **型号检查** —— 本屏仅支持树莓派 5；其它型号会使脚本以退出码 `1` 停止。
 2. **编译并安装** —— 编译两个内核模块与设备树 overlay 并部署。当 `drivers/build/`
@@ -14,6 +14,10 @@
    `/boot/firmware/config.txt` 改成与之完全一致：注释掉错误或冲突的行，
    在文件末尾追加正确的行。
 4. **亮度启动器** —— 在桌面用户的应用菜单里加入一个可点击启动的背光滑条入口。
+5. **触摸守护** —— 部署 `drivers/touch-guard.py` 及其 systemd 一次性服务
+   `drivers/touch-guard.service` 并设为开机自启，用于在冷启动把 GT911 留在默认
+   4096 量程时开机自动重新探测。它是内核/overlay 供电修复的兜底，当该修复已生效时
+   什么都不做；用 `--remove-guard` 移除。
 
 脚本可重复运行（幂等），没有非交互模式：请在终端里运行并回答提示。
 
@@ -34,13 +38,15 @@
 Freenove_TouchScreen_Driver_Install/
 ├── install.py                         # 你运行的前端安装器
 ├── readme.md / readme_cn.md           # 使用文档
-├── drivers/                           # build.sh 编译与部署的全部内容
+├── drivers/                           # 驱动源码以及 install.py 部署的文件
 │   ├── build.sh                       #   编译/部署脚本
 │   ├── Makefile                       #   内核模块构建规则
 │   ├── panel-freenove-ek79007.c        #   DRM 屏驱动源码
 │   ├── freenove-panel-regulator.c      #   屏上 MCU（GPIO+背光）驱动源码
 │   ├── vc4-kms-dsi-freenove-panel.dts  #   设备树 overlay 源码
 │   ├── brightness.py                   #   背光滑条
+│   ├── touch-guard.py                  #   冷启动触摸量程守护（兜底）
+│   ├── touch-guard.service             #   对应的 systemd 一次性单元
 │   └── build/                          #   （生成物）编译出的 .ko/.dtbo
 └── logo/
     └── brightness.png                 # 菜单启动器的图标
@@ -61,7 +67,7 @@ sudo python3 install.py
 
 | 选项 | 作用 |
 |---|---|
-| *（不带选项）* | 完整交互安装：型号检查 → 编译/部署 → `config.txt` → 亮度启动器 → 总结 |
+| *（不带选项）* | 完整交互安装：型号检查 → 编译/部署 → `config.txt` → 亮度启动器 → 触摸守护 → 总结 |
 | `--reinstall` | 忽略 `drivers/build/` 是否新鲜的判断，强制完整“编译 + 部署” |
 | `--rotation X` | 直接设置显示旋转（`0` / `90` / `180` / `270`） |
 | `--swapxy` | 直接设置触摸 XY 交换 |
@@ -94,6 +100,7 @@ sudo python3 install.py
 | `--remove-overlay` | `/boot/firmware/overlays/` 下的 `vc4-kms-dsi-freenove-panel.dtbo` |
 | `--remove-config` | 本安装器加进 `config.txt` 的 Freenove `dtoverlay` 行（你原有的 `dtoverlay=vc4-kms-v3d` 不受影响） |
 | `--remove-menu` | `~/.local/share/applications/` 下的亮度启动器及其副本文件 |
+| `--remove-guard` | 停用并删除触摸守护（`freenove-touch-guard.service` 与 `/usr/local/bin/freenove-touch-guard.py`） |
 | `--uninstall` | 以上全部 |
 
 ## 退出码
@@ -119,3 +126,9 @@ sudo python3 install.py
 - **亮度启动器** —— 它以 `Terminal=false` 在后台启动 `brightness.py`。而
   `brightness.py` 通过 `sudo tee` 写背光，所以只有当 `sudo` 凭据已缓存、或该命令
   被配置为免密（NOPASSWD）时，点击才能真正改变亮度。
+- **触摸守护** —— 作为冷启动兜底，安装为 `freenove-touch-guard.service`。当内核/overlay
+  已在触摸探测前拉高 IOVCC 时，它开机读到正确的 800x480 量程就什么都不做；只有冷启动
+  把 GT911 留在 4096 默认量程时才会重新绑定触摸驱动。可用
+  `systemctl status freenove-touch-guard.service` 与
+  `sudo python3 /usr/local/bin/freenove-touch-guard.py --probe` 查看，用
+  `sudo python3 install.py --remove-guard` 移除。

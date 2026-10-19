@@ -1,0 +1,48 @@
+# Freenove GT911 touch range guard.
+#
+# Runs the fallback re-bind once per boot, after the display stack has had a
+# chance to power IOVCC. It is a no-op when the kernel/overlay already raises
+# IOVCC before the touch probes (the chip then reports the right 800x480
+# range); it only re-binds the touch driver when a cold boot left the GT911 on
+# its 4096 power-on default. The driver is located by its I2C address, so it
+# works whichever goodix variant is loaded (mainline goodix / vendor Goodix-TS).
+#
+# Recommended: let install.py deploy and enable this for you. A normal
+#   sudo python3 install.py
+# run installs both files, reloads systemd and enables the unit; taking it
+# back out is
+#   sudo python3 install.py --remove-guard
+#
+# The manual steps below are only a backup for when you are not going through
+# install.py (run from a shell on the Pi, from the project root):
+#   sudo cp drivers/touch-guard.py /usr/local/bin/freenove-touch-guard.py
+#   sudo cp drivers/touch-guard.service /etc/systemd/system/freenove-touch-guard.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable freenove-touch-guard.service
+#
+# Test by hand without rebooting:
+#   sudo python3 /usr/local/bin/freenove-touch-guard.py --probe
+#   sudo python3 /usr/local/bin/freenove-touch-guard.py
+#
+# Take it back out by hand:
+#   sudo systemctl disable --now freenove-touch-guard.service
+#   sudo rm /etc/systemd/system/freenove-touch-guard.service \
+#           /usr/local/bin/freenove-touch-guard.py
+#   sudo systemctl daemon-reload
+
+[Unit]
+Description=Freenove GT911 touch range guard (re-probe if cold boot used the default range)
+# After multi-user the panel is up and IOVCC is on, which is what the re-bind
+# needs; the script still waits an extra settle window before acting.
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# --power-settle lets KMS finish bringing the glass up before the guard reads
+# or re-binds the touch; --wait tolerates a goodix device that is still
+# deferred at this point.
+ExecStart=/usr/bin/python3 /usr/local/bin/freenove-touch-guard.py --power-settle 6 --wait 10
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

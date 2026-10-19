@@ -28,6 +28,12 @@ into the desktop user's application menu (--remove-menu takes it back out). It
 mirrors create_desktop_shortcut.py's create_application_to_programming and uses
 brightness.png as the icon.
 
+A fifth action deploys the GT911 touch range guard (drivers/touch-guard.py and
+drivers/touch-guard.service) as a boot-time oneshot that re-probes the touch
+when a cold boot leaves the GT911 on its 4096 power-on range. It is a fallback
+for the kernel/overlay IOVCC power fix and stays a no-op once that fix already
+yields the right range; --remove-guard takes it back out.
+
 Two flags are read-only queries rather than install steps: --screen and --touch
 print the current display / touch overlay parameters found in config.txt,
 falling back to the .dts defaults for anything not set there. They change
@@ -84,6 +90,19 @@ BRIGHTNESS_ICON = "brightness.png"
 # The shell wrapper the menu entry runs (create_desktop_shortcut wraps run_app.sh
 # the same way); it execs the copied brightness.py.
 BRIGHTNESS_LAUNCHER_SH = "freenove-brightness.sh"
+
+# --- touch range guard: a boot-time cold-boot fallback for the GT911 ---------
+# The guard re-probes the touch when a cold boot left the chip on its default
+# 4096 range. It is optional insurance for the kernel/overlay fix, so it lives
+# in its own files and only becomes active once these deploy steps run: the
+# .py is the guard, the .service is a systemd oneshot that runs it once per
+# boot. The ExecStart inside the unit points at the installed .py path below,
+# so the two destinations have to stay in sync with that file.
+GUARD_SCRIPT = "touch-guard.py"
+GUARD_UNIT = "touch-guard.service"
+GUARD_UNIT_NAME = "freenove-touch-guard.service"
+GUARD_SCRIPT_DEST = Path("/usr/local/bin/freenove-touch-guard.py")
+GUARD_UNIT_DEST = Path("/etc/systemd/system/freenove-touch-guard.service")
 
 # --- what a finished run of build.sh leaves in drivers/build/, i.e. how
 #     "already compiled" is judged
@@ -965,6 +984,78 @@ class MenuEntry:
             print(f"No launcher to remove in {dest_dir}")
 
 
+# --- touch range guard -------------------------------------------------------
+class TouchGuard:
+    """Deploy and enable the GT911 cold-boot range guard as a boot oneshot.
+
+    This is a fallback, not the primary fix: once the kernel/overlay raises
+    IOVCC before the touch probes, the guard reads the correct 800x480 range at
+    boot and does nothing. It only re-binds the touch driver when a cold boot
+    left the GT911 on its 4096 power-on default (coordinates fine, mapping
+    wrong). Two files go in, both root-owned:
+      drivers/touch-guard.py       -> /usr/local/bin/freenove-touch-guard.py
+      drivers/touch-guard.service  -> /etc/systemd/system/freenove-touch-guard.service
+    Writing those paths and enabling the unit need root, so every privileged
+    step runs through the SUDO wrapper install.py already uses. Nothing here is
+    fatal to the rest of the install: a missing source or a failed enable only
+    skips / warns about the guard.
+    """
+
+    def __init__(self, drivers_dir: Path):
+        self.script_src = drivers_dir / GUARD_SCRIPT
+        self.unit_src = drivers_dir / GUARD_UNIT
+
+    def available(self) -> bool:
+        return self.script_src.is_file() and self.unit_src.is_file()
+
+    def install(self) -> bool:
+        """Copy the script + unit and enable the service; return success."""
+        if not self.available():
+            print(
+                f"Warning: {GUARD_SCRIPT} / {GUARD_UNIT} not found under drivers/; "
+                "the touch range guard was not installed."
+            )
+            return False
+        for src, dest in (
+            (self.script_src, GUARD_SCRIPT_DEST),
+            (self.unit_src, GUARD_UNIT_DEST),
+        ):
+            # install(1) sets content, mode and ownership in one go; the .py is
+            # run through python3 by the unit, so a plain 0644 is enough.
+            status = Console.command(SUDO + ["install", "-m", "0644", str(src), str(dest)])
+            if status != 0:
+                print(f"Warning: installing {dest} failed (exit {status}); the guard is incomplete.")
+                return False
+        # daemon-reload so systemd sees the new unit, then enable so it runs at
+        # every boot. A failed enable is reported but does not abort the run.
+        Console.command(SUDO + ["systemctl", "daemon-reload"])
+        status = Console.command(SUDO + ["systemctl", "enable", GUARD_UNIT_NAME])
+        if status != 0:
+            print("Warning: the guard is deployed but enabling it failed; it will not run at boot.")
+            return False
+        print(f"Touch range guard deployed and enabled: {GUARD_UNIT_NAME}")
+        return True
+
+    def remove(self, quiet: bool = False) -> None:
+        """Disable the service, then delete both files it installed.
+
+        disable comes before rm: a unit deleted while still enabled leaves a
+        dangling symlink in systemd's wants directory. Everything is best
+        effort, so an --uninstall on a system that never got the guard stays
+        quiet.
+        """
+        Console.command(SUDO + ["systemctl", "disable", "--now", GUARD_UNIT_NAME])
+        removed = False
+        for dest in (GUARD_UNIT_DEST, GUARD_SCRIPT_DEST):
+            if dest.exists() and Console.command(SUDO + ["rm", "-f", str(dest)]) == 0:
+                removed = True
+        Console.command(SUDO + ["systemctl", "daemon-reload"])
+        if removed:
+            print(f"Touch range guard removed: {GUARD_UNIT_NAME} and its script")
+        elif not quiet:
+            print("No touch range guard installation found to remove.")
+
+
 # --- installer ----------------------------------------------------------------
 class Installer:
     """Command line plus the steps, in the order the readme asks for."""
@@ -1184,6 +1275,16 @@ class Installer:
         entry.remove(quiet=True)
         entry.create()
 
+    # --- touch range guard ---------------------------------------------------
+    def step_guard(self) -> None:
+        """Deploy the boot-time GT911 range guard (a cold-boot fallback)."""
+        Console.banner("Installing the GT911 touch range guard (cold-boot fallback)")
+        guard = TouchGuard(self.drivers_dir)
+        if not guard.available():
+            print("Guard sources are not under drivers/; skipping this step.")
+            return
+        guard.install()
+
     # --- cleanup operations --------------------------------------------------
     # Each one deletes what install.py put in place and nothing else, so a single
     # flag takes just that folder or file back out; --uninstall runs them all.
@@ -1195,6 +1296,7 @@ class Installer:
                 self.args.remove_overlay,
                 self.args.remove_config,
                 self.args.remove_menu,
+                self.args.remove_guard,
             )
         )
 
@@ -1209,6 +1311,8 @@ class Installer:
             self.remove_config()
         if everything or self.args.remove_menu:
             self.remove_menu()
+        if everything or self.args.remove_guard:
+            self.remove_guard()
         # Only an overlay / config.txt removal needs a reboot to take effect; a
         # workspace clean or a menu removal is already complete on disk.
         if everything or self.args.remove_overlay or self.args.remove_config:
@@ -1257,6 +1361,9 @@ class Installer:
     def remove_menu(self) -> None:
         MenuEntry(self.drivers_dir, self.logo_dir).remove()
 
+    def remove_guard(self) -> None:
+        TouchGuard(self.drivers_dir).remove()
+
     # --- wrap-up -------------------------------------------------------------
     def step_summary(self) -> None:
         Console.banner("Driver installed and configured")
@@ -1294,6 +1401,7 @@ class Installer:
         self.step_install()
         self.step_config()
         self.step_menu()
+        self.step_guard()
         self.step_summary()
         return EXIT_OK
 
@@ -1347,6 +1455,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--remove-menu",
         action="store_true",
         help="remove the brightness.py launcher (and its copies) and exit",
+    )
+    parser.add_argument(
+        "--remove-guard",
+        action="store_true",
+        help="disable and delete the GT911 touch range guard (service + script) and exit",
     )
     parser.add_argument(
         "--clean",

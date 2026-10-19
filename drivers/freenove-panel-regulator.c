@@ -24,10 +24,12 @@
  *   - the optional enable-gpios property, which points back at our own bit 2
  *     and gates the supply in front of the PWM.
  *
- * probe() leaves only VCC on. The glass supplies, and reset with them,
- * belong to the panel driver's prepare(), so the power-up order lives in
- * exactly one place; the DT pre-power-on property is there for setups that
- * want the glass fed before that happens.
+ * probe() raises VCC and IOVCC. IOVCC comes up here because the same rail
+ * feeds the GT911 touch, which has to be powered before the goodix driver
+ * reads its config; the AVDD supply and the glass reset still belong to the
+ * panel driver's prepare(), so the panel power-up order lives in exactly one
+ * place. The DT pre-power-on property additionally fronts AVDD and reset for
+ * setups that want an image as early as possible.
  */
 
 #include <linux/backlight.h>		/* backlight_device_register() */
@@ -41,6 +43,7 @@
 #include <linux/of.h>			/* OF match tables */
 #include <linux/property.h>		/* device property access */
 #include <linux/regmap.h>		/* regmap_init_i2c(), regmap_write() */
+#include <linux/regulator/driver.h>	/* devm_regulator_register(), struct regulator_desc */
 
 /* The register map of the panel MCU. */
 #define FPN_REG_TP		0x94	/* mask bits 15..8 */
@@ -83,6 +86,7 @@ struct freenove_panel_mcu {
 
 	struct gpio_chip gc;
 	struct gpio_desc *enable;
+	struct regulator_dev *iovcc_rdev;
 };
 
 /* Byte address, byte value, nothing past 0x96 reachable through regmap; the identity registers above it are read with i2c_transfer() instead. */
@@ -272,6 +276,77 @@ static int freenove_panel_i2c_read(struct i2c_client *client, u8 reg,
 }
 
 /*
+ * --- IOVCC offered as a regulator ---
+ * GT911 touch is fed from the same IOVCC rail (bit 4) the glass uses, and
+ * that rail is normally only raised by the panel driver's prepare(). On a
+ * cold boot the in-tree goodix driver can probe for the touch before IOVCC
+ * is up, so its config read returns the chip's power-on defaults (a 4096
+ * range instead of this panel's 800x480) and touch works but maps wrong; a
+ * warm reboot hides this because the board never lost power, so IOVCC was
+ * already on. Exposing bit 4 as a regulator and referencing it from the
+ * touch node makes the kernel defer the goodix probe (EPROBE_DEFER) until
+ * this driver has probed and the supply is real, removing the race.
+ *
+ * One bit, two consumers: the panel drives bit 4 through its iovcc-gpios
+ * descriptor and the touch enables it through this regulator. Both only ever
+ * ask for the bit high while the display is up, and the shadow-mask write is
+ * serialised by pwr_lock, so the two paths stay consistent.
+ */
+static void freenove_panel_set_bit(struct freenove_panel_mcu *state,
+				   unsigned int bit, bool on)
+{
+	u16 value;
+
+	mutex_lock(&state->pwr_lock);
+	value = state->poweron_state;
+	if (on)
+		value |= BIT(bit);
+	else
+		value &= ~BIT(bit);
+	state->poweron_state = value;
+	freenove_panel_write_state(state, value);
+	mutex_unlock(&state->pwr_lock);
+}
+
+static int freenove_panel_iovcc_enable(struct regulator_dev *rdev)
+{
+	freenove_panel_set_bit(rdev_get_drvdata(rdev), 4, true);
+	return 0;
+}
+
+static int freenove_panel_iovcc_disable(struct regulator_dev *rdev)
+{
+	freenove_panel_set_bit(rdev_get_drvdata(rdev), 4, false);
+	return 0;
+}
+
+static int freenove_panel_iovcc_is_enabled(struct regulator_dev *rdev)
+{
+	struct freenove_panel_mcu *state = rdev_get_drvdata(rdev);
+	bool on;
+
+	mutex_lock(&state->pwr_lock);
+	on = state->poweron_state & FPN_BIT_IOVCC;
+	mutex_unlock(&state->pwr_lock);
+
+	return on;
+}
+
+static const struct regulator_ops freenove_panel_iovcc_ops = {
+	.enable = freenove_panel_iovcc_enable,
+	.disable = freenove_panel_iovcc_disable,
+	.is_enabled = freenove_panel_iovcc_is_enabled,
+};
+
+static const struct regulator_desc freenove_panel_iovcc_desc = {
+	.name = "vddio",
+	.id = 0,
+	.ops = &freenove_panel_iovcc_ops,
+	.type = REGULATOR_VOLTAGE,
+	.owner = THIS_MODULE,
+};
+
+/*
  * probe: runs once the panel-mcu@45 node created by the overlay matches our
  * compatible string and the I2C core has made a client out of it.
  *
@@ -317,17 +392,18 @@ static int freenove_panel_i2c_probe(struct i2c_client *i2c)
 			 data);
 
 	/*
-	 * VCC alone to start with, so the board is fed while the glass stays
-	 * dark and the panel driver keeps ownership of the supply order.
-	 * pre-power-on is the exception, for setups that want an image as
-	 * early as possible: the extra rails come up here and need a longer
-	 * settle time than VCC by itself.
+	 * VCC plus IOVCC from the very start: IOVCC (bit 4) also feeds the
+	 * GT911 touch, so raising it here means the chip is powered and has
+	 * settled long before the goodix driver probes for it, instead of
+	 * waiting for the panel's prepare(). The glass itself still needs
+	 * AVDD + reset + DCS init, so bringing IOVCC up early neither lights
+	 * it nor breaks the panel supply order. pre-power-on additionally
+	 * fronts the analog rail and reset, needing a longer settle time.
 	 */
 	pre_power_on = device_property_read_bool(&i2c->dev, "pre-power-on");
-	state->poweron_state = FPN_BIT_VCC;
+	state->poweron_state = FPN_BIT_VCC | FPN_BIT_IOVCC;
 	if (pre_power_on)
-		state->poweron_state |= FPN_BIT_IOVCC | FPN_BIT_LCD_RESET |
-					FPN_BIT_AVDD;
+		state->poweron_state |= FPN_BIT_LCD_RESET | FPN_BIT_AVDD;
 	freenove_panel_write_state(state, state->poweron_state);
 	msleep(pre_power_on ? 200 : 20);
 
@@ -368,7 +444,30 @@ static int freenove_panel_i2c_probe(struct i2c_client *i2c)
 		return PTR_ERR(bl);
 	bl->props.brightness = 255;		/* come up at full brightness */
 
-	dev_info(&i2c->dev, "panel MCU probed: gpiochip + backlight registered\n");
+	/*
+	 * Offer bit 4 as the "vddio" supply. The touch node references this
+	 * node through power-supply / vddio-supply, so the kernel holds the
+	 * goodix probe at bay (EPROBE_DEFER) until this line exists and
+	 * IOVCC is genuinely on. Registered last, so the gpio_chip and the
+	 * shadow mask are ready before anything can toggle the rail through
+	 * the regulator.
+	 */
+	{
+		struct regulator_config config = { };
+
+		config.dev = &i2c->dev;
+		config.of_node = i2c->dev.of_node;
+		config.driver_data = state;
+
+		state->iovcc_rdev = devm_regulator_register(&i2c->dev,
+					  &freenove_panel_iovcc_desc, &config);
+		if (IS_ERR(state->iovcc_rdev))
+			return dev_err_probe(&i2c->dev,
+					     PTR_ERR(state->iovcc_rdev),
+					     "failed to register IOVCC regulator\n");
+	}
+
+	dev_info(&i2c->dev, "panel MCU probed: gpiochip + backlight + vddio registered\n");
 	return 0;
 }
 

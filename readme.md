@@ -7,7 +7,7 @@ Read this in other languages: [English](readme.md) | [简体中文](readme_cn.md
 
 ## What it does
 
-One run performs the following four steps, in order:
+One run performs the following five steps, in order:
 
 1. **Board check** — the panel is supported on a Raspberry Pi 5 only; any other
    board makes the script stop with exit code `1`.
@@ -19,6 +19,11 @@ One run performs the following four steps, in order:
    wrong or conflicting lines and appending the correct ones at the end.
 4. **Brightness launcher** — adds a click-to-run backlight slider entry to the
    desktop user's application menu.
+5. **Touch range guard** — deploys `drivers/touch-guard.py` and its systemd
+   oneshot `drivers/touch-guard.service` and enables them, so a cold boot that
+   left the GT911 on its default 4096 range is re-probed at start-up. It is a
+   fallback for the kernel/overlay power fix and stays a no-op when that fix
+   already works; `--remove-guard` takes it back out.
 
 The script is idempotent (safe to re-run) and has no non-interactive mode: run
 it from a terminal and answer the prompts.
@@ -42,13 +47,15 @@ files it calls are split into two folders:
 Freenove_TouchScreen_Driver_Install/
 ├── install.py                         # the front-end you run
 ├── readme.md / readme_cn.md           # this documentation
-├── drivers/                           # everything build.sh compiles and deploys
+├── drivers/                           # driver sources + what install.py deploys
 │   ├── build.sh                       #   the build/deploy script
 │   ├── Makefile                       #   kernel-module build rules
 │   ├── panel-freenove-ek79007.c        #   DRM panel driver source
 │   ├── freenove-panel-regulator.c      #   on-panel MCU (GPIO + backlight) source
 │   ├── vc4-kms-dsi-freenove-panel.dts  #   device tree overlay source
 │   ├── brightness.py                   #   the backlight slider
+│   ├── touch-guard.py                  #   cold-boot touch range guard (fallback)
+│   ├── touch-guard.service             #   its systemd oneshot unit
 │   └── build/                          #   (generated) compiled .ko/.dtbo output
 └── logo/
     └── brightness.png                 # icon for the menu launcher
@@ -70,7 +77,7 @@ sudo python3 install.py
 
 | Option | What it does |
 |---|---|
-| *(no option)* | Full interactive install: board check → build/deploy → `config.txt` → brightness launcher → summary |
+| *(no option)* | Full interactive install: board check → build/deploy → `config.txt` → brightness launcher → touch guard → summary |
 | `--reinstall` | Ignore the `drivers/build/` freshness check and force a full "compile + deploy" |
 | `--rotation X` | Set the display rotation directly (`0` / `90` / `180` / `270`) |
 | `--swapxy` | Set the touch X/Y swap flag directly |
@@ -104,6 +111,7 @@ all of them. They take effect **immediately** (there is no preview mode).
 | `--remove-overlay` | `vc4-kms-dsi-freenove-panel.dtbo` from `/boot/firmware/overlays/` |
 | `--remove-config` | The Freenove `dtoverlay` lines this installer added to `config.txt` (your own `dtoverlay=vc4-kms-v3d` is left untouched) |
 | `--remove-menu` | The brightness launcher and its copies in `~/.local/share/applications/` |
+| `--remove-guard` | Disable and delete the touch range guard (`freenove-touch-guard.service` and `/usr/local/bin/freenove-touch-guard.py`) |
 | `--uninstall` | All of the above |
 
 ## Exit codes
@@ -133,3 +141,10 @@ all of them. They take effect **immediately** (there is no preview mode).
   (`Terminal=false`). `brightness.py` writes the backlight through `sudo tee`,
   so a click only changes the brightness when `sudo` is already cached or the
   command is configured passwordless (NOPASSWD).
+- **Touch range guard** — a cold-boot fallback installed as
+  `freenove-touch-guard.service`. Once the kernel/overlay raises IOVCC before
+  the touch probes, it reads the correct 800x480 range at boot and does nothing;
+  it only re-binds the touch driver when a cold boot left the GT911 on its 4096
+  power-on default. Inspect it with `systemctl status freenove-touch-guard.service`
+  and `sudo python3 /usr/local/bin/freenove-touch-guard.py --probe`; remove it
+  with `sudo python3 install.py --remove-guard`.

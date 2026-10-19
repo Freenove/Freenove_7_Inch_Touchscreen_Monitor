@@ -72,6 +72,21 @@
 				 */
 				touchscreen-size-x = <800>;
 				touchscreen-size-y = <480>;
+				/* GT911 shares the panel's IOVCC rail (MCU bit 4). Naming that
+				 * rail as this device's supply makes the goodix probe wait for
+				 * the MCU driver to register it and raise IOVCC, so the chip is
+				 * powered before its config is read. Without it a cold boot can
+				 * probe the touch while the rail is still off, the config read
+				 * fails, and goodix falls back to the 4096 default range (touch
+				 * maps wrong even though coordinates still come through).
+				 * Both spellings are given because different goodix builds ask
+				 * for the supply under different names: "Power" resolves
+				 * power-supply, "VDDIO" resolves vddio-supply; whichever one the
+				 * driver never asks for is simply ignored. They point at the same
+				 * regulator, matched by the panel_mcu node's of_node.
+				 */
+				power-supply = <&panel_mcu>;
+				vddio-supply = <&panel_mcu>;
 			};
 		};
 	};
