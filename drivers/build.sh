@@ -62,22 +62,63 @@ if [ "$INSTALL_ONLY" = 1 ]; then
 	# dtc and the headers exist to serve the compiles, so this half is a no-op.
 	echo "-- install-only: nothing is compiled, no package installed"
 else
+	# The modules are built for the architecture of the running kernel. A 32-bit
+	# Raspberry Pi OS image on a Pi 5 still boots the 64-bit (arm64) kernel, but
+	# its apt carries no arm64 kernel headers or compiler (the install dies on
+	# 'gcc-12:arm64 ... not installable') and its native gcc only emits 32-bit
+	# objects that the arm64 kernel refuses to load. There is no clean way to
+	# build the arm64 module from a 32-bit userland, so stop here with the real
+	# reason instead of a broken dependency chain. Detect the arm64 kernel from
+	# the release suffix as well as uname -m, because a 32-bit shell can report
+	# armv8l rather than aarch64 for the same arm64 kernel.
+	USERLAND_ARCH="$(dpkg --print-architecture 2>/dev/null || echo unknown)"
+	KERNEL_IS_ARM64=0
+	[ "$(uname -m)" = "aarch64" ] && KERNEL_IS_ARM64=1
+	case "$(uname -r)" in
+		*-v8|*-v8+|*-2712|*-2712+|*-2711|*-2711+) KERNEL_IS_ARM64=1 ;;
+	esac
+	if [ "${KERNEL_IS_ARM64}" = 1 ]; then
+		case "${USERLAND_ARCH}" in
+			armhf|armel)
+				echo "Error: the running kernel is 64-bit arm64 but this userland is 32-bit (${USERLAND_ARCH})."
+				echo "A Pi 5 boots an arm64 kernel even on 32-bit Raspberry Pi OS, and the panel"
+				echo "modules have to be arm64 -- which a 32-bit install can neither build nor"
+				echo "should try to. Please use the 64-bit Raspberry Pi OS (arm64 Bookworm/Trixie)."
+				exit 1
+				;;
+		esac
+	fi
+
 	sudo apt update
 	sudo apt install -y device-tree-compiler   # provides dtc, needed for the overlay
 
-	# Kernel headers are named differently per distribution: Trixie has
-	# linux-headers-rpi-{v6,v7,v7l,v8} with the CPU architecture as the suffix,
-	# Bookworm and earlier have raspberrypi-kernel-headers. The build symlink for
-	# the running kernel is the proof that headers are already in place, so that
-	# case is skipped entirely.
+	# A C compiler has to be present before the headers: from 6.12 on the kernel
+	# header package declares a Depends on the matching gcc, so without a
+	# toolchain apt refuses the headers and the run then looks like a missing-
+	# header failure rather than a missing-compiler one.
+	sudo apt install -y build-essential
+
+	# Kernel header packaging differs per release and CPU, and one kernel may be
+	# named by architecture (v6/v7/v7l/v8) or by SoC (2712 on the Pi 5 64-bit
+	# image), so no single fixed package name is right everywhere. The running
+	# kernel is only buildable once /lib/modules/$(uname -r)/build exists, so try
+	# the package that names the full release exactly first (that matches both
+	# naming schemes), then the per-architecture meta package, then the pre-Trixie
+	# raspberrypi-kernel-headers, and trust none of them until that build symlink
+	# is really in place. '|| true' keeps set -e from aborting on an attempt a
+	# given distribution legitimately does not have a package for.
 	if [ ! -e "/lib/modules/$(uname -r)/build" ]; then
-		HDR_SUFFIX="$(uname -r | sed 's/.*rpi-//')"   # the architecture suffix at the end of the kernel release, e.g. v8 or v7l
-		if ! sudo apt install -y "linux-headers-rpi-${HDR_SUFFIX}"; then
-			sudo apt install -y raspberrypi-kernel-headers   # the name used before Trixie
-		fi
+		HDR_SUFFIX="$(uname -r | sed 's/.*rpi-//')"   # trailing arch/SoC token: v8, v7l, 2712, ...
+		sudo apt install -y "linux-headers-$(uname -r)" \
+			|| sudo apt install -y "linux-headers-rpi-${HDR_SUFFIX}" \
+			|| sudo apt install -y raspberrypi-kernel-headers \
+			|| true
 	fi
 	if [ ! -e "/lib/modules/$(uname -r)/build" ]; then
 		echo "Error: no kernel headers found for $(uname -r); cannot build the modules"
+		echo "None of the header packages left /lib/modules/$(uname -r)/build in place."
+		echo "Refresh the index and install this exact release, then re-run:"
+		echo "    sudo apt update && sudo apt install -y linux-headers-$(uname -r)"
 		exit 1
 	fi
 fi
