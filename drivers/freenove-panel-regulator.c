@@ -44,6 +44,7 @@
 #include <linux/property.h>		/* device property access */
 #include <linux/regmap.h>		/* regmap_init_i2c(), regmap_write() */
 #include <linux/regulator/driver.h>	/* devm_regulator_register(), struct regulator_desc */
+#include <linux/version.h>		/* LINUX_VERSION_CODE, KERNEL_VERSION() */
 
 /* The register map of the panel MCU. */
 #define FPN_REG_TP		0x94	/* mask bits 15..8 */
@@ -185,15 +186,31 @@ static int freenove_panel_gpio_get(struct gpio_chip *gc, unsigned int offset)
  * Set a line level, the entry point the panel driver uses for its supplies
  * and for reset. Under pwr_lock: take the mirror, flip the one bit, store it
  * back, then push the whole mask over I2C.
+ *
+ * The return type is a kernel API break: ->set() returned int up to 6.8 and
+ * became void in 6.9 ("gpiolib: get rid of the return value of ->set() and
+ * ->set_multiple()"). A Pi 5 runs 6.12, but guarding on LINUX_VERSION_CODE
+ * keeps this one source building against older Trixie/Bookworm images too.
+ * The GPIO core bounds-checks offset against ngpio before calling, so a line
+ * past the last is simply ignored.
  */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+static void freenove_panel_gpio_set(struct gpio_chip *gc, unsigned int offset,
+				    int value)
+#else
 static int freenove_panel_gpio_set(struct gpio_chip *gc, unsigned int offset,
 				   int value)
+#endif
 {
 	struct freenove_panel_mcu *state = gpiochip_get_data(gc);
 	u16 last_val;
 
 	if (offset >= FPN_NUM_GPIO)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+		return;
+#else
 		return -EINVAL;
+#endif
 
 	mutex_lock(&state->pwr_lock);
 	last_val = state->poweron_state;
@@ -205,7 +222,9 @@ static int freenove_panel_gpio_set(struct gpio_chip *gc, unsigned int offset,
 	freenove_panel_write_state(state, last_val);
 	mutex_unlock(&state->pwr_lock);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 9, 0)
 	return 0;
+#endif
 }
 
 /*
