@@ -536,6 +536,6 @@ static struct i2c_driver freenove_panel_regulator_driver = {
 };
 module_i2c_driver(freenove_panel_regulator_driver);
 
-MODULE_AUTHOR("Ling Lin");
+MODULE_AUTHOR("Zhentao-Lin");
 MODULE_DESCRIPTION("I2C panel MCU driver for the Freenove 7\" DSI panel");
 MODULE_LICENSE("GPL");

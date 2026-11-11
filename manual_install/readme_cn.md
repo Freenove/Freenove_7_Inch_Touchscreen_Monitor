@@ -1,0 +1,152 @@
+# Freenove 7inch-C DSI 屏 —— `install.py` 使用说明
+
+Read this in other languages: [English](readme.md) | [简体中文](readme_cn.md)
+
+`install.py` 是在树莓派 5 上安装 Freenove 7-DSI-TOUCH-C 屏驱动（EK79007 玻璃，
+1024x600）的一键前端脚本。
+
+## 它做了什么
+
+一次运行按顺序完成以下五步：
+
+1. **型号检查** —— 本屏仅支持树莓派 5；其它型号会使脚本以退出码 `1` 停止。
+2. **编译并安装** —— 编译两个内核模块与设备树 overlay 并部署。当 `drivers/build/`
+   已完整且不过期时，会跳过编译、只做部署。
+3. **config.txt** —— 询问屏线接在哪个 DSI 接口（`dsi0` / `dsi1`），并把
+   `/boot/firmware/config.txt` 改成与之完全一致：注释掉错误或冲突的行，
+   在文件末尾追加正确的行。
+4. **亮度启动器** —— 在桌面用户的应用菜单里加入一个可点击启动的背光滑条入口。
+   创建前会先检查滑条依赖的 PyQt5 能否被桌面 `python3` 导入，缺失则用 apt 安装
+   `python3-pyqt5`；此步骤非致命，失败只告警、不中断其余安装。
+5. **触摸守护** —— 部署 `drivers/touch-guard.py` 及其 systemd 一次性服务
+   `drivers/touch-guard.service` 并设为开机自启，用于在冷启动把 GT911 留在默认
+   4096 量程时开机自动重新探测。它是内核/overlay 供电修复的兜底，当该修复已生效时
+   什么都不做；用 `--remove-guard` 移除。
+
+脚本可重复运行（幂等），没有非交互模式：请在终端里运行并回答提示。
+
+## 运行环境要求
+
+- 树莓派 5，系统为 **64 位** Raspberry Pi OS（Bookworm 或 Trixie）。**本屏仅支持
+  树莓派 5（BCM2712）**——树莓派 3 / 4 无法驱动（原因见“注意事项”），`install.py`
+  在其它型号上会以退出码 `1` 停止。镜像必须是 64 位：树莓派 5 即使刷 32 位镜像也会
+  引导 arm64 内核，而屏的内核模块无法在 32 位用户态下编译。
+- 已在以下 Raspberry Pi OS 镜像上完整验证通过（编译、加载、显示与触摸均正常；均为
+  64 位，发布于 2026-10-06）。具体的 Raspberry Pi Imager 选择见 `picture/` 文件夹：
+  - `picture/Raspberry Pi OS (64-bit)--Trixie.png` —— Raspberry Pi OS (64-bit)，Debian Trixie 移植版，内核 6.18.50+rpt-rpi-2712
+  - `picture/Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png` —— Raspberry Pi OS (Legacy, 64-bit)，Debian Bookworm 移植版，内核 6.12.109+rpt-rpi-2712
+- Python 3 —— 安装器本身只用标准库。
+- root 权限 —— 用 `sudo` 运行。
+- 它启动的背光滑条（`drivers/brightness.py`）需要 `python3-pyqt5`。
+
+## 工程结构
+
+本目录（`manual_install/`）是**手动、树外**方案：`install.py` 在树莓派上现场编译并部署驱动。（同级 `normal_install/` 是内核内方案，合入后随系统自动更新。）一切都由位于本目录根的 `install.py` 驱动，它调用的文件位于 `drivers/` 与 `logo/`；`picture/` 与 `datasheet/` 是参考资料：
+
+```
+manual_install/
+├── install.py                         # 你运行的前端安装器
+├── readme.md / readme_cn.md           # 使用文档
+├── drivers/                           # 驱动源码以及 install.py 部署的文件
+│   ├── build.sh                       #   编译/部署脚本
+│   ├── Makefile                       #   内核模块构建规则
+│   ├── panel-freenove-ek79007.c        #   DRM 屏驱动源码
+│   ├── freenove-panel-regulator.c      #   屏上 MCU（GPIO+背光）驱动源码
+│   ├── vc4-kms-dsi-freenove-panel.dts  #   设备树 overlay 源码
+│   ├── brightness.py                   #   背光滑条
+│   ├── touch-guard.py                  #   冷启动触摸量程守护（兜底）
+│   ├── touch-guard.service             #   对应的 systemd 一次性单元
+│   └── build/                          #   （生成物）编译出的 .ko/.dtbo
+├── logo/
+│   └── brightness.png                 # 菜单启动器的图标
+├── picture/                           # 已测试的 Raspberry Pi OS 镜像截图
+│   ├── Raspberry Pi OS (64-bit)--Trixie.png
+│   └── Raspberry Pi OS (Legacy, 64-bit)--Bookworm.png
+└── datasheet/                         # 屏的规格书
+    └── HXR070WSI30-2735.pdf
+```
+
+`build.sh` 始终以自己所在目录为基准，所以无论从哪里调用，`build/` 都生成在
+`drivers/build/`。`install.py` 会自动在这些子目录里查找源码、产物和启动器文件。
+
+## 用法
+
+```bash
+sudo python3 install.py
+```
+
+## 命令行选项
+
+### 安装流程
+
+| 选项 | 作用 |
+|---|---|
+| *（不带选项）* | 完整交互安装：型号检查 → 编译/部署 → `config.txt` → 亮度启动器 → 触摸守护 → 总结 |
+| `--reinstall` | 忽略 `drivers/build/` 是否新鲜的判断，强制完整“编译 + 部署” |
+| `--ensure-pyqt` | 检查背光滑条所需的 PyQt5，缺失则安装 `python3-pyqt5`，然后退出 |
+| `--rotation X` | 直接设置显示旋转（`0` / `90` / `180` / `270`） |
+| `--swapxy` | 直接设置触摸 XY 交换 |
+| `--invx` | 直接设置触摸 X 反转 |
+| `--invy` | 直接设置触摸 Y 反转 |
+| `--sizex N` / `--sizey N` | 直接设置触摸坐标范围 |
+
+`--rotation` / `--swapxy` / `--invx` / `--invy` / `--sizex` / `--sizey` 这些选项只写入 `config.txt`（开机覆盖参数），**不修改 `.dts`、不触发重新编译**。`--ensure-pyqt` 只执行 PyQt5 依赖检查（并在缺失时安装）然后退出。
+
+### 查询当前配置（只读）
+
+`--screen` 和 `--touch` 是纯查询：它们从 `config.txt` 读取当前的 overlay
+参数，对没有配置的地方显示 `.dts` 默认值，不改动任何内容就直接退出
+（不做型号检查、不编译）。要修改某个值，请使用上面的独立开关
+`--rotation` / `--swapxy` / `--invx` / `--invy` / `--sizex` / `--sizey`。
+
+| 选项 | 打印内容 |
+|---|---|
+| `--screen` | 当前的显示旋转（`0` / `90` / `180` / `270`） |
+| `--touch` | 当前触摸配置：`swapxy` / `invx` / `invy` 开关状态 + `sizex` / `sizey` 坐标范围 |
+
+### 删除已安装的内容
+
+下面每个选项只做对应的清理然后退出；`--uninstall` 会把它们全部执行。它们会
+**立即生效**（没有预览模式）。
+
+| 选项 | 删除内容 |
+|---|---|
+| `--clean` | 生成的 `drivers/build/` 与根目录的 `__pycache__` |
+| `--remove-overlay` | `/boot/firmware/overlays/` 下的 `vc4-kms-dsi-freenove-panel.dtbo` |
+| `--remove-config` | 本安装器加进 `config.txt` 的 Freenove `dtoverlay` 行（你原有的 `dtoverlay=vc4-kms-v3d` 不受影响） |
+| `--remove-menu` | `~/.local/share/applications/` 下的亮度启动器及其副本文件 |
+| `--remove-guard` | 停用并删除触摸守护（`freenove-touch-guard.service` 与 `/usr/local/bin/freenove-touch-guard.py`） |
+| `--uninstall` | 以上全部 |
+
+## 退出码
+
+| 码 | 含义 |
+|---|---|
+| `0` | 成功 |
+| `1` | 硬件不支持（不是树莓派 5） |
+| `2` | 出错 |
+| `3` | 用户取消 |
+
+## 注意事项
+
+- **仅支持树莓派 5 —— Pi 4 为何黑屏** —— overlay 是按树莓派 5（BCM2712）的显示
+  通路绑定本屏的：屏上 MCU / GT911 触摸挂到 `&i2c_csi_dsi`，DSI 主机挂到 `&dsi1`。
+  而树莓派 4（BCM2711）的 DSI 显示座、CSI 与 I2C 路由都不同，因此在该板上 I2C
+  `0x45` 处的 MCU 根本不会出现，regulator / panel 驱动无节点可绑定，点亮屏幕所需的
+  上电 + DCS 初始化时序也就跑不起来。这是**硬件 / 设备树层面的差异，换更新的系统镜像
+  并不能解决**
+- **重启生效** —— overlay 与 `config.txt` 的改动需 `sudo reboot` 后生效。
+- **内核升级后** —— 执行 `apt full-upgrade` 后，已编译的模块与运行内核不再匹配，
+  需重新运行 `sudo python3 install.py` 重新编译。
+- **亮度启动器** —— 它以 `Terminal=false` 在后台启动 `brightness.py`。而
+  `brightness.py` 通过 `sudo tee` 写背光，所以只有当 `sudo` 凭据已缓存、或该命令
+  被配置为免密（NOPASSWD）时，点击才能真正改变亮度。
+- **滑条所需 PyQt5** —— 背光滑条依赖 PyQt5，来自 apt 包 `python3-pyqt5`。第 4 步
+  会检查桌面 `python3` 能否导入它，缺失则自动安装（需 sudo；失败只告警，不会中断
+  整个安装）。只想单独跑这项检查：`sudo python3 install.py --ensure-pyqt`。
+- **触摸守护** —— 作为冷启动兜底，安装为 `freenove-touch-guard.service`。当内核/overlay
+  已在触摸探测前拉高 IOVCC 时，它开机读到正确的 800x480 量程就什么都不做；只有冷启动
+  把 GT911 留在 4096 默认量程时才会重新绑定触摸驱动。可用
+  `systemctl status freenove-touch-guard.service` 与
+  `sudo python3 /usr/local/bin/freenove-touch-guard.py --probe` 查看，用
+  `sudo python3 install.py --remove-guard` 移除。

@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/regulator/freenove,panel-mcu.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Freenove DSI panel on-board MCU (I2C)
+
+maintainers:
+  - Zhentao-Lin <173039613@qq.com>
+
+description: |
+  The Freenove "7inch C" MIPI-DSI panel carries a small MCU on the panel PCB,
+  connected to the DSI connector's I2C bus at address 0x45. It drives every
+  power rail, the reset line and the backlight of the EK79007 glass; none of
+  those reach the SoC directly.
+
+  Its outputs are a single 16-bit mask held in registers 0x94 (bits 15..8) and
+  0x95 (bits 7..0), which cannot be read back, plus a backlight duty register
+  0x96. The driver reshapes that protocol into standard kernel interfaces: a
+  16-line GPIO controller (bit N is line N), a backlight device, and a
+  regulator for bit 4 (IOVCC) that also feeds the panel's GT911 touch so the
+  touch probe is deferred until the rail is up.
+
+properties:
+  compatible:
+    const: freenove,panel-mcu
+
+  reg:
+    maxItems: 1
+
+  gpio-controller: true
+
+  "#gpio-cells":
+    const: 2
+    description: |
+      The first cell is the mask bit number (0..15); the second cell holds the
+      usual GPIO flags.
+
+  enable-gpios:
+    maxItems: 1
+    description: |
+      Optional backlight enable gate. Points back at this controller's own
+      BL_EN bit (bit 2), so it is only usable once the GPIO chip is registered.
+
+required:
+  - compatible
+  - reg
+  - gpio-controller
+  - "#gpio-cells"
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        panel_mcu: panel-mcu@45 {
+            compatible = "freenove,panel-mcu";
+            reg = <0x45>;
+
+            gpio-controller;
+            #gpio-cells = <2>;
+
+            enable-gpios = <&panel_mcu 2 GPIO_ACTIVE_HIGH>;
+        };
+    };

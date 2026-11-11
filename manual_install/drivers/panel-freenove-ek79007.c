@@ -440,5 +440,5 @@ static struct mipi_dsi_driver freenove_panel_dsi_driver = {
 module_mipi_dsi_driver(freenove_panel_dsi_driver);
 
 MODULE_DESCRIPTION("DRM panel driver for the Freenove 7\" EK79007 DSI panel");
-MODULE_AUTHOR("Ling Lin");
+MODULE_AUTHOR("Zhentao-Lin");
 MODULE_LICENSE("GPL");
